@@ -857,6 +857,7 @@ header .subtitle {
     font-weight: 600;
     line-height: 1.4;
     margin-bottom: 25px;
+    white-space: pre-line;
 }
 
 .confirm-modal-buttons {

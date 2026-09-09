@@ -105,16 +105,86 @@ function promptForGroupName() {
     });
 }
 
+// Make sure gameState.currentPlayerIndex actually points at a player who
+// can take a turn. Falls back to the first eligible player if the saved
+// index is out of range (e.g. a player was removed elsewhere) or if the
+// saved current player is already marked "out" - without this, no card
+// would end up marked "current" and there'd be no "My Turn" button to
+// click, effectively stalling the game for whoever loads it next.
+function resolveCurrentPlayerIndex() {
+    if (gameState.players.length === 0) return false;
+
+    const originalIndex = gameState.currentPlayerIndex;
+
+    if (gameState.currentPlayerIndex < 0 || gameState.currentPlayerIndex >= gameState.players.length) {
+        gameState.currentPlayerIndex = 0;
+    }
+
+    if (gameState.players[gameState.currentPlayerIndex].isOut) {
+        const startIndex = gameState.currentPlayerIndex;
+        let idx = startIndex;
+        let steps = 0;
+        do {
+            idx = (idx + 1) % gameState.players.length;
+            steps++;
+        } while (gameState.players[idx].isOut && idx !== startIndex && steps <= gameState.players.length);
+        gameState.currentPlayerIndex = idx;
+    }
+
+    return gameState.currentPlayerIndex !== originalIndex;
+}
+
 // Load (or create) the current group's data from Firestore and hydrate
 // gameState / winnersCache from it. Runs once on page load.
-async function initGroup() {
-    let storedGroupId = localStorage.getItem(GROUP_ID_STORAGE_KEY);
+async function initGroup() {    let storedGroupId = localStorage.getItem(GROUP_ID_STORAGE_KEY);
     let storedGroupName = localStorage.getItem(GROUP_NAME_STORAGE_KEY);
 
+    // Snapshot of the group we end up joining, fetched during the
+    // "does this name already exist?" check below - reused afterward so we
+    // don't have to read the same document from Firestore twice.
+    let confirmedSnapshot = null;
+
     if (!storedGroupId) {
-        const enteredName = await promptForGroupName();
-        storedGroupName = enteredName;
-        storedGroupId = sanitizeGroupId(enteredName);
+        // Keep prompting until the person either types a brand-new name,
+        // or explicitly confirms they want to join an existing group.
+        while (!storedGroupId) {
+            const enteredName = await promptForGroupName();
+            const candidateId = sanitizeGroupId(enteredName);
+
+            setLoadingState(true, 'Checking group name...');
+            let snapshot = null;
+            try {
+                snapshot = await getDoc(groupDocRef(candidateId));
+            } catch (err) {
+                // Can't reach Firestore to check - don't block the person
+                // over it, just let them proceed and the normal load/save
+                // error handling further down will surface any real problem.
+                console.error('Could not check group name:', err);
+            }
+            setLoadingState(false);
+
+            if (snapshot && snapshot.exists()) {
+                const data = snapshot.data();
+                const playerNames = (data.players || []).map(p => p.name);
+                const playerList = playerNames.length
+                    ? 'Current players: ' + playerNames.join(', ')
+                    : 'It has no players yet.';
+                const isTheirs = await showGameConfirm(
+                    'A group called "' + enteredName + '" already exists.\n' +
+                    playerList + '\n\n' +
+                    'Is this your group? Choose "Cancel" to pick a different name.'
+                );
+
+                if (!isTheirs) {
+                    continue; // back to the prompt for a different name
+                }
+                confirmedSnapshot = snapshot;
+            }
+
+            storedGroupName = enteredName;
+            storedGroupId = candidateId;
+        }
+
         localStorage.setItem(GROUP_ID_STORAGE_KEY, storedGroupId);
         localStorage.setItem(GROUP_NAME_STORAGE_KEY, storedGroupName);
     }
@@ -126,7 +196,9 @@ async function initGroup() {
     setLoadingState(true, 'Loading ' + currentGroupName + '\u2019s game...');
 
     try {
-        const snapshot = await getDoc(groupDocRef(currentGroupId));
+        // Reuse the snapshot from the name-check above when we have one,
+        // instead of fetching the same document again.
+        const snapshot = confirmedSnapshot || await getDoc(groupDocRef(currentGroupId));
 
         if (snapshot.exists()) {
             const data = snapshot.data();
@@ -134,6 +206,9 @@ async function initGroup() {
             gameState.currentPlayerIndex = data.currentPlayerIndex || 0;
             gameState.gameOver = data.gameOver || false;
             winnersCache = data.winners || {};
+            if (resolveCurrentPlayerIndex()) {
+                queueSave();
+            }
         } else {
             // Brand new group - create its document right away.
             winnersCache = {};
