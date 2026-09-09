@@ -7,7 +7,6 @@
 // 4. In the Firebase Console, go to Firestore Database -> Create database
 //    (start in "production mode" is fine - see SETUP.md for the security rules to paste in).
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
-import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-analytics.js";
 import {
     getFirestore,
     doc,
@@ -27,7 +26,6 @@ const firebaseConfig = {
 };
 
 const firebaseApp = initializeApp(firebaseConfig);
-const analytics = getAnalytics(firebaseApp);
 const db = getFirestore(firebaseApp);
 
 // ============================================================
