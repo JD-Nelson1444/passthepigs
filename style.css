@@ -788,10 +788,40 @@ header .subtitle {
 }
 
 .group-name-error {
-    color: #ffe0e0;
+    color: #e9a16e;
     font-size: 13px;
     min-height: 18px;
     margin: 0 0 10px;
+}
+
+.group-step.hidden {
+    display: none;
+}
+
+.group-step-buttons {
+    flex-direction: column;
+}
+
+.group-step-buttons .btn {
+    width: 100%;
+}
+
+.group-code-input {
+    letter-spacing: 6px;
+    font-weight: 700;
+    font-size: 20px;
+}
+
+.group-code-display {
+    font-size: 42px;
+    font-weight: 700;
+    letter-spacing: 8px;
+    background: rgba(255, 255, 255, 0.2);
+    border: 2px dashed rgba(255, 255, 255, 0.6);
+    border-radius: 10px;
+    padding: 14px 10px;
+    margin-bottom: 20px;
+    text-align: center;
 }
 
 /* Loading Overlay */
@@ -834,6 +864,12 @@ header .subtitle {
 }
 
 /* Confirm / Alert Popup (styled replacement for browser confirm/alert) */
+/* Confirm/alert popups can open on top of the turn popup and the scores
+   side panel (z-index 1001), so they need to sit above both. */
+.confirm-modal-overlay {
+    z-index: 1100;
+}
+
 .confirm-modal-content {
     display: flex;
     flex-direction: column;

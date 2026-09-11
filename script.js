@@ -1,17 +1,10 @@
-// ============================================================
-// Firebase Setup
-// ============================================================
-// 1. Go to https://console.firebase.google.com, create a project (free).
-// 2. Add a "Web App" to that project (the </> icon on the project overview page).
-// 3. Firebase will show you a config object - paste your real values below.
-// 4. In the Firebase Console, go to Firestore Database -> Create database
-//    (start in "production mode" is fine - see SETUP.md for the security rules to paste in).
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
 import {
     getFirestore,
     doc,
     getDoc,
     setDoc,
+    onSnapshot,
     serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
@@ -32,22 +25,31 @@ const db = getFirestore(firebaseApp);
 // Group Management
 // ============================================================
 // Every group's game (players, scores, winner history) lives in its own
-// Firestore document at groups/{groupId}. The group name a person types in
-// is turned into that document's ID, so anyone who types the same name is
-// automatically looking at the same game.
+// Firestore document. The document's ID is the group's name PLUS a private
+// 4-digit code (e.g. "smith-family-7391") - never just the name alone.
+// The name is a friendly label; the code is the actual access key. This
+// means knowing (or guessing) a group's name isn't enough to see or change
+// its data - you also need the code, which is only ever shown to whoever
+// created the group. Firestore's rules additionally block listing every
+// group, so there's no way to browse for valid name/code combinations -
+// you have to already know one.
 const GROUP_ID_STORAGE_KEY = 'passThePigsGroupId';
 const GROUP_NAME_STORAGE_KEY = 'passThePigsGroupName';
+const GROUP_CODE_STORAGE_KEY = 'passThePigsGroupCode';
 
 let currentGroupId = null;
 let currentGroupName = null;
+let currentGroupCode = null;
 let saveTimeout = null;
+let unsubscribeGroup = null; // stops the live Firestore listener (see subscribeToGroup)
 
 // In-memory cache of all-time winner counts for the current group.
 // Kept separate from gameState because it persists across "Reset Game"
 // (only "Clear Winner Records" wipes it).
 let winnersCache = {};
 
-// Turn a free-typed group name into a safe, consistent Firestore document ID.
+// Turn a free-typed group name into a safe, consistent string for use in a
+// Firestore document ID (combined with the group's code - see above).
 function sanitizeGroupId(rawName) {
     const cleaned = rawName
         .trim()
@@ -55,7 +57,7 @@ function sanitizeGroupId(rawName) {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 60);
-    return cleaned || ('group-' + Date.now());
+    return cleaned || 'group';
 }
 
 function groupDocRef(groupId) {
@@ -76,32 +78,158 @@ function updateGroupBadge() {
     groupBadgeLabel.textContent = 'Group: ' + currentGroupName;
 }
 
-// Ask the person for a group name via the styled popup (no page-blocking
-// window.prompt, and no way to dismiss without entering something).
-function promptForGroupName() {
-    return new Promise((resolve) => {
-        groupNameError.textContent = '';
-        groupNameInput.value = '';
-        groupModal.classList.add('show');
-        setTimeout(() => groupNameInput.focus(), 100);
+function generateGroupCode() {
+    return String(Math.floor(1000 + Math.random() * 9000)); // 1000-9999
+}
 
-        const trySubmit = () => {
-            const raw = groupNameInput.value.trim();
-            if (!raw) {
-                groupNameError.textContent = 'Please enter a group name.';
+// Keep generating random codes until we find one that isn't already in use
+// for this particular group name (collisions are rare - 1 in 9000 - but
+// worth guarding against so two unrelated "Smith Family" groups can never
+// end up sharing a document).
+async function generateUniqueGroupCode(sanitizedName) {
+    for (let attempt = 0; attempt < 10; attempt++) {
+        const code = generateGroupCode();
+        try {
+            const snapshot = await getDoc(groupDocRef(sanitizedName + '-' + code));
+            if (!snapshot.exists()) {
+                return code;
+            }
+        } catch (err) {
+            // Can't check for a collision right now - the odds of hitting
+            // one are low enough that it's better to proceed than to block
+            // group creation entirely over a transient network hiccup.
+            console.error('Could not verify group code uniqueness:', err);
+            return code;
+        }
+    }
+    // Extremely unlikely fallback after 10 straight collisions.
+    return String(Date.now()).slice(-4);
+}
+
+// Swap which step of the group setup popup is visible.
+function showGroupStep(stepId) {
+    document.querySelectorAll('.group-step').forEach((el) => el.classList.add('hidden'));
+    document.getElementById(stepId).classList.remove('hidden');
+}
+
+// Runs the full "new group or join existing" wizard in the group popup.
+// Resolves once the person has either created a new group or successfully
+// joined an existing one, with everything needed to proceed:
+//   { groupId, groupName, groupCode, mode: 'new' | 'join', snapshot? }
+// For 'join', `snapshot` is the Firestore document already fetched while
+// checking the code, so the caller doesn't need to fetch it again.
+function runGroupSetupFlow() {
+    return new Promise((resolve) => {
+        groupModal.classList.add('show');
+        showGroupStep('groupStepChoice');
+
+        function onChooseNew() {
+            groupNameErrorNew.textContent = '';
+            groupNameInputNew.value = '';
+            showGroupStep('groupStepNew');
+            setTimeout(() => groupNameInputNew.focus(), 100);
+        }
+
+        function onChooseExisting() {
+            groupExistingError.textContent = '';
+            groupNameInputExisting.value = '';
+            groupCodeInputExisting.value = '';
+            showGroupStep('groupStepExisting');
+            setTimeout(() => groupNameInputExisting.focus(), 100);
+        }
+
+        function onBackToChoice() {
+            showGroupStep('groupStepChoice');
+        }
+
+        async function onCreate() {
+            const rawName = groupNameInputNew.value.trim();
+            if (!rawName) {
+                groupNameErrorNew.textContent = 'Please enter a group name.';
                 return;
             }
-            groupModal.classList.remove('show');
-            groupModalOkBtn.removeEventListener('click', trySubmit);
-            groupNameInput.removeEventListener('keypress', onKeypress);
-            resolve(raw);
-        };
-        const onKeypress = (e) => {
-            if (e.key === 'Enter') trySubmit();
-        };
 
-        groupModalOkBtn.addEventListener('click', trySubmit);
-        groupNameInput.addEventListener('keypress', onKeypress);
+            groupCreateBtn.disabled = true;
+            setLoadingState(true, 'Setting up your group...');
+
+            const sanitized = sanitizeGroupId(rawName);
+            let code, groupId;
+            try {
+                code = await generateUniqueGroupCode(sanitized);
+                groupId = sanitized + '-' + code;
+                await setDoc(groupDocRef(groupId), {
+                    groupName: rawName,
+                    players: [],
+                    currentPlayerIndex: 0,
+                    gameOver: false,
+                    winners: {},
+                    updatedAt: serverTimestamp()
+                });
+            } catch (err) {
+                console.error('Could not create group:', err);
+                setLoadingState(false);
+                groupCreateBtn.disabled = false;
+                groupNameErrorNew.textContent = "Couldn't reach the game server. Check your connection and try again.";
+                return;
+            }
+
+            setLoadingState(false);
+            groupCreateBtn.disabled = false;
+            groupCodeDisplay.textContent = code;
+            showGroupStep('groupStepCodeReveal');
+
+            const onContinue = () => {
+                groupCodeContinueBtn.removeEventListener('click', onContinue);
+                groupModal.classList.remove('show');
+                resolve({ groupId, groupName: rawName, groupCode: code, mode: 'new' });
+            };
+            groupCodeContinueBtn.addEventListener('click', onContinue);
+        }
+
+        async function onJoin() {
+            const rawName = groupNameInputExisting.value.trim();
+            const rawCode = groupCodeInputExisting.value.trim();
+
+            if (!rawName || !/^\d{4}$/.test(rawCode)) {
+                groupExistingError.textContent = 'Please enter your group name and its 4-digit code.';
+                return;
+            }
+
+            groupJoinBtn.disabled = true;
+            setLoadingState(true, 'Looking for your group...');
+
+            const candidateId = sanitizeGroupId(rawName) + '-' + rawCode;
+            let snapshot = null;
+            try {
+                snapshot = await getDoc(groupDocRef(candidateId));
+            } catch (err) {
+                console.error('Could not look up group:', err);
+                setLoadingState(false);
+                groupJoinBtn.disabled = false;
+                groupExistingError.textContent = "Couldn't reach the game server. Check your connection and try again.";
+                return;
+            }
+
+            setLoadingState(false);
+            groupJoinBtn.disabled = false;
+
+            if (!snapshot.exists()) {
+                // Deliberately vague - this shouldn't confirm or deny whether
+                // the name alone belongs to someone else's group.
+                groupExistingError.textContent = "Couldn't find a group with that name and code. Double-check them with whoever set up the group.";
+                return;
+            }
+
+            groupModal.classList.remove('show');
+            resolve({ groupId: candidateId, groupName: rawName, groupCode: rawCode, mode: 'join', snapshot });
+        }
+
+        groupChooseNewBtn.addEventListener('click', onChooseNew);
+        groupChooseExistingBtn.addEventListener('click', onChooseExisting);
+        groupBackFromNewBtn.addEventListener('click', onBackToChoice);
+        groupBackFromExistingBtn.addEventListener('click', onBackToChoice);
+        groupCreateBtn.addEventListener('click', onCreate);
+        groupJoinBtn.addEventListener('click', onJoin);
     });
 }
 
@@ -134,93 +262,124 @@ function resolveCurrentPlayerIndex() {
     return gameState.currentPlayerIndex !== originalIndex;
 }
 
-// Load (or create) the current group's data from Firestore and hydrate
-// gameState / winnersCache from it. Runs once on page load.
-async function initGroup() {    let storedGroupId = localStorage.getItem(GROUP_ID_STORAGE_KEY);
-    let storedGroupName = localStorage.getItem(GROUP_NAME_STORAGE_KEY);
+// Copy a group document's fields into gameState / winnersCache.
+function applyGroupData(data) {
+    gameState.players = data.players || [];
+    gameState.currentPlayerIndex = data.currentPlayerIndex || 0;
+    gameState.gameOver = data.gameOver || false;
+    gameState.winnerName = data.winnerName || null;
+    winnersCache = data.winners || {};
+}
 
-    // Snapshot of the group we end up joining, fetched during the
-    // "does this name already exist?" check below - reused afterward so we
-    // don't have to read the same document from Firestore twice.
-    let confirmedSnapshot = null;
+// Subscribe to live updates for the current group's document. The first
+// snapshot doubles as the initial load; every later one re-renders the UI
+// so a phone that's just watching the game stays in step with whoever is
+// keeping score. Resolves once the first authoritative snapshot has been
+// applied; rejects if Firestore reports an error or nothing arrives in time.
+//
+// Sync model: one device keeps score, others watch. Every write is a full
+// setDoc of this device's gameState, so to keep the scorekeeper's taps from
+// being overwritten by a stale update from another device, incoming
+// snapshots are ignored whenever this device has a save queued or in
+// flight - its own write will land shortly and become the new truth.
+function subscribeToGroup() {
+    const LOAD_TIMEOUT_MS = 15000;
+
+    return new Promise((resolve, reject) => {
+        let loaded = false;
+        const loadTimer = setTimeout(() => {
+            if (!loaded) reject(new Error('Timed out waiting for group data'));
+        }, LOAD_TIMEOUT_MS);
+
+        unsubscribeGroup = onSnapshot(groupDocRef(currentGroupId), async (snapshot) => {
+            // Our own setDoc echoes back through the listener right away
+            // (before the server confirms it) - gameState already has that
+            // data, so there's nothing to apply.
+            if (snapshot.metadata.hasPendingWrites) return;
+
+            // Offline with nothing cached: not authoritative, wait for the
+            // server rather than treating the group as empty/missing.
+            if (!snapshot.exists() && snapshot.metadata.fromCache) return;
+
+            // A local change is waiting to be saved - don't let a remote
+            // update overwrite it (see the sync model note above).
+            if (loaded && saveTimeout !== null) return;
+
+            if (snapshot.exists()) {
+                applyGroupData(snapshot.data());
+                if (resolveCurrentPlayerIndex()) {
+                    queueSave();
+                }
+            } else if (!loaded) {
+                // Document is missing on first load (e.g. deleted directly in
+                // Firebase) - recreate it with defaults rather than getting stuck.
+                applyGroupData({});
+                await saveGroupState();
+            } else {
+                // Deleted while we were watching. Show an empty game but don't
+                // resurrect the document - whoever deleted it presumably meant to.
+                applyGroupData({});
+            }
+
+            if (!loaded) {
+                loaded = true;
+                clearTimeout(loadTimer);
+                resolve();
+            }
+            updateUI();
+        }, (err) => {
+            clearTimeout(loadTimer);
+            if (!loaded) reject(err);
+            else console.error('Live group updates stopped:', err);
+        });
+    });
+}
+
+// Figure out which group this device belongs to (prompting if needed) and
+// start listening to that group's data. Runs once on page load.
+async function initGroup() {
+    let storedGroupId = localStorage.getItem(GROUP_ID_STORAGE_KEY);
+    let storedGroupName = localStorage.getItem(GROUP_NAME_STORAGE_KEY);
+    let storedGroupCode = localStorage.getItem(GROUP_CODE_STORAGE_KEY);
+    let setupResult = null;
 
     if (!storedGroupId) {
-        // Keep prompting until the person either types a brand-new name,
-        // or explicitly confirms they want to join an existing group.
-        while (!storedGroupId) {
-            const enteredName = await promptForGroupName();
-            const candidateId = sanitizeGroupId(enteredName);
-
-            setLoadingState(true, 'Checking group name...');
-            let snapshot = null;
-            try {
-                snapshot = await getDoc(groupDocRef(candidateId));
-            } catch (err) {
-                // Can't reach Firestore to check - don't block the person
-                // over it, just let them proceed and the normal load/save
-                // error handling further down will surface any real problem.
-                console.error('Could not check group name:', err);
-            }
-            setLoadingState(false);
-
-            if (snapshot && snapshot.exists()) {
-                const data = snapshot.data();
-                const playerNames = (data.players || []).map(p => p.name);
-                const playerList = playerNames.length
-                    ? 'Current players: ' + playerNames.join(', ')
-                    : 'It has no players yet.';
-                const isTheirs = await showGameConfirm(
-                    'A group called "' + enteredName + '" already exists.\n' +
-                    playerList + '\n\n' +
-                    'Is this your group? Choose "Cancel" to pick a different name.'
-                );
-
-                if (!isTheirs) {
-                    continue; // back to the prompt for a different name
-                }
-                confirmedSnapshot = snapshot;
-            }
-
-            storedGroupName = enteredName;
-            storedGroupId = candidateId;
-        }
+        setupResult = await runGroupSetupFlow();
+        storedGroupId = setupResult.groupId;
+        storedGroupName = setupResult.groupName;
+        storedGroupCode = setupResult.groupCode;
 
         localStorage.setItem(GROUP_ID_STORAGE_KEY, storedGroupId);
         localStorage.setItem(GROUP_NAME_STORAGE_KEY, storedGroupName);
+        localStorage.setItem(GROUP_CODE_STORAGE_KEY, storedGroupCode);
     }
 
     currentGroupId = storedGroupId;
     currentGroupName = storedGroupName;
+    currentGroupCode = storedGroupCode;
     updateGroupBadge();
 
     setLoadingState(true, 'Loading ' + currentGroupName + '\u2019s game...');
 
-    try {
-        // Reuse the snapshot from the name-check above when we have one,
-        // instead of fetching the same document again.
-        const snapshot = confirmedSnapshot || await getDoc(groupDocRef(currentGroupId));
+    // If the person just joined a group, we already fetched its document
+    // while checking the code - render that right away so the wait for the
+    // live listener's first snapshot doesn't show an empty screen.
+    if (setupResult && setupResult.snapshot && setupResult.snapshot.exists()) {
+        applyGroupData(setupResult.snapshot.data());
+        updateUI();
+    }
 
-        if (snapshot.exists()) {
-            const data = snapshot.data();
-            gameState.players = data.players || [];
-            gameState.currentPlayerIndex = data.currentPlayerIndex || 0;
-            gameState.gameOver = data.gameOver || false;
-            winnersCache = data.winners || {};
-            if (resolveCurrentPlayerIndex()) {
-                queueSave();
-            }
-        } else {
-            // Brand new group - create its document right away.
-            winnersCache = {};
-            await saveGroupState();
-        }
+    try {
+        await subscribeToGroup();
     } catch (err) {
         console.error('Could not load group data from Firebase:', err);
+        setLoadingState(false);
+        updateUI();
         await showGameAlert("Couldn't connect to the game server, so scores won't be saved online right now. Check your internet connection and reload the page to try again.");
+        return;
     }
 
     setLoadingState(false);
-    updateUI();
 }
 
 // Write the full current game state for this group to Firestore.
@@ -232,6 +391,7 @@ function saveGroupState() {
         players: gameState.players,
         currentPlayerIndex: gameState.currentPlayerIndex,
         gameOver: gameState.gameOver,
+        winnerName: gameState.winnerName,
         winners: winnersCache,
         updatedAt: serverTimestamp()
     }).catch(err => {
@@ -241,16 +401,23 @@ function saveGroupState() {
 
 // Debounced save - call this after any state change instead of calling
 // saveGroupState() directly, so rapid clicks don't fire a write per click.
+// saveTimeout is non-null exactly while a save is queued, which the live
+// listener checks to avoid overwriting unsaved local changes.
 function queueSave() {
     clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(saveGroupState, 400);
+    saveTimeout = setTimeout(() => {
+        saveTimeout = null;
+        saveGroupState();
+    }, 400);
 }
 
 // Forget the saved group on this device and reload so the group prompt
 // appears again, letting the person switch to (or create) a different group.
 function switchGroup() {
+    if (unsubscribeGroup) unsubscribeGroup();
     localStorage.removeItem(GROUP_ID_STORAGE_KEY);
     localStorage.removeItem(GROUP_NAME_STORAGE_KEY);
+    localStorage.removeItem(GROUP_CODE_STORAGE_KEY);
     window.location.reload();
 }
 
@@ -468,11 +635,24 @@ const pastelCardColors = [
     '#FFD9D9'  // pastel coral
 ];
 
+// Escape text before dropping it into an innerHTML template. Player names
+// are typed by anyone in the group and sync to every device, so without this
+// a name like "<img src=x onerror=...>" would run as code on other phones.
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // Game state
 const gameState = {
     players: [],
     currentPlayerIndex: 0,
-    gameOver: false
+    gameOver: false,
+    winnerName: null // set when gameOver is true so every device can show who won
 };
 
 // Winner tracking system
@@ -529,6 +709,7 @@ const winnerMessage = document.getElementById('winnerMessage');
 const winnerLeaderboard = document.getElementById('winnerLeaderboard');
 const resetGameBtn = document.getElementById('resetGameBtn');
 const resetGameSamePlayersBtn = document.getElementById('resetGameSamePlayersBtn');
+const endGameBtn = document.getElementById('endGameBtn');
 const clearWinnersBtn = document.getElementById('clearWinnersBtn');
 const modal = document.getElementById('imageModal');
 const openBtn = document.getElementById('openModalBtn');
@@ -546,11 +727,24 @@ const confirmModalButtons = document.getElementById('confirmModalButtons');
 const confirmModalOkBtn = document.getElementById('confirmModalOkBtn');
 const confirmModalCancelBtn = document.getElementById('confirmModalCancelBtn');
 const groupModal = document.getElementById('groupModal');
-const groupNameInput = document.getElementById('groupNameInput');
-const groupNameError = document.getElementById('groupNameError');
-const groupModalOkBtn = document.getElementById('groupModalOkBtn');
 const groupBadgeLabel = document.getElementById('groupBadgeLabel');
 const switchGroupBtn = document.getElementById('switchGroupBtn');
+const showGroupCodeBtn = document.getElementById('showGroupCodeBtn');
+const groupChooseNewBtn = document.getElementById('groupChooseNewBtn');
+const groupChooseExistingBtn = document.getElementById('groupChooseExistingBtn');
+const groupStepNew = document.getElementById('groupStepNew');
+const groupNameInputNew = document.getElementById('groupNameInputNew');
+const groupNameErrorNew = document.getElementById('groupNameErrorNew');
+const groupBackFromNewBtn = document.getElementById('groupBackFromNewBtn');
+const groupCreateBtn = document.getElementById('groupCreateBtn');
+const groupStepExisting = document.getElementById('groupStepExisting');
+const groupNameInputExisting = document.getElementById('groupNameInputExisting');
+const groupCodeInputExisting = document.getElementById('groupCodeInputExisting');
+const groupExistingError = document.getElementById('groupExistingError');
+const groupBackFromExistingBtn = document.getElementById('groupBackFromExistingBtn');
+const groupJoinBtn = document.getElementById('groupJoinBtn');
+const groupCodeDisplay = document.getElementById('groupCodeDisplay');
+const groupCodeContinueBtn = document.getElementById('groupCodeContinueBtn');
 const loadingOverlay = document.getElementById('loadingOverlay');
 const loadingMessage = document.getElementById('loadingMessage');
 
@@ -635,11 +829,12 @@ function showGameAlert(message) {
 }
 
 addPlayerBtn.addEventListener('click', addPlayer);
-playerNameInput.addEventListener('keypress', (e) => {
+playerNameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') addPlayer();
 });
 resetGameBtn.addEventListener('click', resetGame);
 resetGameSamePlayersBtn.addEventListener('click', resetGameSamePlayers);
+endGameBtn.addEventListener('click', endGameAndGoHome);
 clearWinnersBtn.addEventListener('click', async () => {
     const confirmed = await showGameConfirm('Are you sure you want to clear all winner records? This cannot be undone.');
     if (confirmed) {
@@ -649,10 +844,14 @@ clearWinnersBtn.addEventListener('click', async () => {
 });
 
 switchGroupBtn.addEventListener('click', async () => {
-    const confirmed = await showGameConfirm('Switch to a different group? This device will forget "' + currentGroupName + '" and ask for a new group name.');
+    const confirmed = await showGameConfirm('Switch to a different group? This device will forget "' + currentGroupName + '" and ask you to create or join a group again.');
     if (confirmed) {
         switchGroup();
     }
+});
+
+showGroupCodeBtn.addEventListener('click', async () => {
+    await showGameAlert('Group: ' + currentGroupName + '\nCode: ' + currentGroupCode + '\n\nShare both the name and the code with anyone who wants to join this group from another device.');
 });
 
 // Play intro song when page loads
@@ -751,7 +950,7 @@ async function addPlayer() {
 // Remove a player from the game
 function removePlayer(index) {
     if (gameState.players.length <= 1) {
-        alert('At least 1 player is required');
+        showGameAlert('At least 1 player is required');
         return;
     }
     
@@ -766,22 +965,33 @@ function removePlayer(index) {
 }
 
 // Record a score for the current player
-function recordScore(playerIndex, scoreType, points) {
+async function recordScore(playerIndex, scoreType, points) {
     if (gameState.gameOver) return;
-    
+
     // Check if it's this player's turn
     if (playerIndex !== gameState.currentPlayerIndex) {
-        alert("It's not " + gameState.players[playerIndex].name + "'s turn yet! It's " + gameState.players[gameState.currentPlayerIndex].name + "'s turn. Please wait for your turn.");
+        await showGameAlert("It's not " + gameState.players[playerIndex].name + "'s turn yet! It's " + gameState.players[gameState.currentPlayerIndex].name + "'s turn. Please wait for your turn.");
         return;
     }
-    
+
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
-    
+
     if (currentPlayer.isOut) {
-        alert(currentPlayer.name + ' is out of the game');
+        await showGameAlert(currentPlayer.name + ' is out of the game');
         return;
     }
-    
+
+    // Oinker and Piggy Back end the turn immediately, which wipes the undo
+    // history - so a mis-tap can't be taken back. Confirm first, since both
+    // wipe the player's entire total (and Piggy Back knocks them out).
+    if (scoreType === 'Oinker' || scoreType === 'Piggy Back') {
+        const consequence = scoreType === 'Oinker'
+            ? 'This will reset ' + currentPlayer.name + "'s total score from " + currentPlayer.totalScore + ' to 0 and end their turn.'
+            : 'This will reset ' + currentPlayer.name + "'s total score from " + currentPlayer.totalScore + ' to 0 and remove them from the game.';
+        const confirmed = await showGameConfirm(scoreType + '? ' + consequence);
+        if (!confirmed) return;
+    }
+
     // Handle penalties
     if (scoreType === 'Pig Out') {
         // Lose turn score only
@@ -847,7 +1057,7 @@ function endTurn() {
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
     
     if (currentPlayer.turnScore === 0 && !currentPlayer.history.length) {
-        alert('Record a score before ending turn');
+        showGameAlert('Record a score before ending turn');
         return;
     }
     
@@ -923,23 +1133,43 @@ function endGame(winnerName) {
     
     // Record the win in the tracker
     winnerTracker.recordWin(winnerName);
-    const winCount = winnerTracker.getWinCount(winnerName);
-    
+
     gameState.gameOver = true;
-    gameOverBackdrop.classList.remove('hidden');
-    gameOverMessage.classList.remove('hidden');
-    const winnerPoints = gameState.players.find(p => p.name === winnerName).totalScore;
-    
-    // Display winner message with win count
-    winnerMessage.innerHTML = `<strong>${winnerName}</strong> wins with <strong>${winnerPoints}</strong> points!<br><br>
-<span class="win-stats">${winnerName} has won <strong>${winCount}</strong> ${winCount === 1 ? 'game' : 'games'}</span>`;
-    
-    // Generate and display winner leaderboard
-    generateWinnerLeaderboard();
-    
+    gameState.winnerName = winnerName;
+
+    updateUI(); // renders the game-over screen via renderGameOverState()
+
     playWinSound();
     playRandomWinnerSong();
     queueSave();
+}
+
+// Show or hide the game-over screen to match gameState. Driven purely by
+// state (rather than only from endGame) so a device that's just watching
+// sees the winner when the update arrives from Firestore.
+function renderGameOverState() {
+    if (!gameState.gameOver) {
+        gameOverBackdrop.classList.add('hidden');
+        gameOverMessage.classList.add('hidden');
+        winnerLeaderboard.innerHTML = '';
+        return;
+    }
+
+    // Older group documents were saved before winnerName existed - fall back
+    // to whoever crossed 100 points.
+    const winner = gameState.players.find(p => p.name === gameState.winnerName)
+        || gameState.players.find(p => p.totalScore >= 100);
+    const winnerName = winner ? winner.name : (gameState.winnerName || 'Someone');
+    const winnerPoints = winner ? winner.totalScore : 0;
+    const winCount = winnerTracker.getWinCount(winnerName);
+
+    const safeWinnerName = escapeHtml(winnerName);
+    winnerMessage.innerHTML = `<strong>${safeWinnerName}</strong> wins with <strong>${winnerPoints}</strong> points!<br><br>
+<span class="win-stats">${safeWinnerName} has won <strong>${winCount}</strong> ${winCount === 1 ? 'game' : 'games'}</span>`;
+    generateWinnerLeaderboard();
+
+    gameOverBackdrop.classList.remove('hidden');
+    gameOverMessage.classList.remove('hidden');
 }
 
 // Generate and display the winner leaderboard
@@ -964,7 +1194,7 @@ function generateWinnerLeaderboard() {
         leaderboardHTML += `
             <div class="winner-item">
                 <span class="winner-rank">${medal || index + 1}.</span>
-                <span class="winner-name">${playerName}</span>
+                <span class="winner-name">${escapeHtml(playerName)}</span>
                 <span class="winner-count">${winCount}</span>
             </div>
         `;
@@ -978,14 +1208,27 @@ function resetGame() {
     gameState.players = [];
     gameState.currentPlayerIndex = 0;
     gameState.gameOver = false;
-    gameOverBackdrop.classList.add('hidden');
-    gameOverMessage.classList.add('hidden');
-    winnerLeaderboard.innerHTML = '';
+    gameState.winnerName = null;
     playerNameInput.value = '';
     closeTurnModal();
     availableAddPlayerSounds = []; // start a fresh sound pool for the new game
     updateUI();
     queueSave();
+}
+
+// End the game entirely: clear this group's players in Firestore (winner
+// history is left untouched) and forget this device's group so the person
+// lands back on the opening "new group / join group" screen.
+async function endGameAndGoHome() {
+    gameState.players = [];
+    gameState.currentPlayerIndex = 0;
+    gameState.gameOver = false;
+    gameState.winnerName = null;
+    renderGameOverState();
+
+    setLoadingState(true, 'Ending game...');
+    await saveGroupState();
+    switchGroup(); // clears the saved group name/code on this device and reloads
 }
 
 // Reset game scores but keep the same players
@@ -1000,12 +1243,10 @@ function resetGameSamePlayers() {
     
     gameState.currentPlayerIndex = 0;
     gameState.gameOver = false;
-    gameOverBackdrop.classList.add('hidden');
-    gameOverMessage.classList.add('hidden');
-    winnerLeaderboard.innerHTML = '';
+    gameState.winnerName = null;
     updateUI();
     queueSave();
-    
+
     // Automatically open the first player's turn popup
     if (gameState.players.length > 0) {
         playPlayerSoundClip(gameState.players[0].addSound);
@@ -1036,6 +1277,10 @@ function updateUI() {
     if (scoresModal.classList.contains('show')) {
         updateScoresModalContent();
     }
+
+    // Show/hide the game-over screen based on state (matters for devices
+    // that receive gameOver from Firestore rather than ending the game locally)
+    renderGameOverState();
 }
 
 // Create a compact summary card for the players grid (roster view)
@@ -1050,7 +1295,7 @@ function createPlayerSummaryCard(player, index) {
     const header = document.createElement('div');
     header.className = 'player-header';
     header.innerHTML = `
-        <div class="player-name">${player.name}${isCurrent ? ' (Current)' : ''}</div>
+        <div class="player-name">${escapeHtml(player.name)}${isCurrent ? ' (Current)' : ''}</div>
         <button class="remove-player-btn" data-index="${index}">×</button>
     `;
     header.querySelector('.remove-player-btn').addEventListener('click', () => removePlayer(index));
@@ -1101,7 +1346,7 @@ function createPlayerTurnCard(player, index) {
     // Header with player name
     const header = document.createElement('div');
     header.className = 'player-header';
-    header.innerHTML = `<div class="player-name">${player.name}'s Turn</div>`;
+    header.innerHTML = `<div class="player-name">${escapeHtml(player.name)}'s Turn</div>`;
     
     // Score display
     const scoreDisplay = document.createElement('div');
@@ -1174,15 +1419,20 @@ function createPlayerTurnCard(player, index) {
 // Fill the turn popup with the current player's interactive scoring card
 function updateTurnModalContent() {
     turnModalContent.innerHTML = '';
-    
+
+    // Nothing to show (game over, no players, or current player is out) -
+    // close the popup rather than leave an empty card up. This can happen on
+    // a watching device when the scorekeeper's update arrives from Firestore.
     if (gameState.players.length === 0 || gameState.gameOver) {
+        closeTurnModal();
         return;
     }
-    
+
     const index = gameState.currentPlayerIndex;
     const player = gameState.players[index];
-    
+
     if (player.isOut) {
+        closeTurnModal();
         return;
     }
     
@@ -1207,7 +1457,7 @@ function updateScoresModalContent() {
         row.style.backgroundColor = pastelCardColors[index % pastelCardColors.length];
         
         row.innerHTML = `
-            <span class="scores-list-name">${player.name}${isCurrent ? ' <span class="current-badge">Current</span>' : ''}${player.isOut ? ' <span class="current-badge">Out</span>' : ''}</span>
+            <span class="scores-list-name">${escapeHtml(player.name)}${isCurrent ? ' <span class="current-badge">Current</span>' : ''}${player.isOut ? ' <span class="current-badge">Out</span>' : ''}</span>
             <span class="scores-list-score">${player.totalScore}</span>
         `;
         

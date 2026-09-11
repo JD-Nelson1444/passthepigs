@@ -10,7 +10,7 @@
     <div class="container">
         <header>
             <div class="header-content">
-                <video autoplay muted loop class="header-video">
+                <video autoplay muted loop playsinline class="header-video">
                     <source src="Video/PTP.mp4" type="video/mp4">
                     Your browser does not support the video tag.
                 </video>
@@ -22,6 +22,7 @@
             <!-- Group badge (shows which group's game is currently loaded) -->
             <div class="group-badge" id="groupBadge">
                 <span id="groupBadgeLabel"></span>
+                <button id="showGroupCodeBtn" class="switch-group-btn" title="Show this group's code">Show Code</button>
                 <button id="switchGroupBtn" class="switch-group-btn" title="Switch to a different group">Switch Group</button>
             </div>
 
@@ -75,6 +76,7 @@
                     <div class="reset-buttons-container">
                         <button id="resetGameBtn" class="btn btn-primary">Reset Game</button>
                         <button id="resetGameSamePlayersBtn" class="btn btn-primary">Reset Game - Same Players</button>
+                        <button id="endGameBtn" class="btn btn-primary">End Game</button>
                     </div>
                 </div>
             </div>
@@ -99,16 +101,53 @@
                 </div>
             </div>
 
-            <!-- Group Name Popup (shown on first visit / after switching groups) -->
+            <!-- Group Setup Popup (shown on first visit / after switching groups) -->
             <div class="modal-overlay group-modal-overlay" id="groupModal">
                 <div class="modal-content confirm-modal-content group-modal-content">
                     <div class="confirm-modal-icon">🐷</div>
-                    <p class="confirm-modal-message">What's your group's name?</p>
-                    <p class="group-modal-subtext">Anyone who enters the same name will see the same players and scores. Pick something unique to your group, like "Smith Family" or "Cabin 3".</p>
-                    <input type="text" id="groupNameInput" class="group-name-input" placeholder="Enter group name" maxlength="40">
-                    <p id="groupNameError" class="group-name-error"></p>
-                    <div class="confirm-modal-buttons">
-                        <button id="groupModalOkBtn" class="btn btn-primary confirm-modal-ok">Let's Play</button>
+
+                    <!-- Step 1: new group or joining one already in progress -->
+                    <div id="groupStepChoice" class="group-step">
+                        <p class="confirm-modal-message">Is this a new group, or one you've played with before?</p>
+                        <div class="confirm-modal-buttons group-step-buttons">
+                            <button id="groupChooseNewBtn" class="btn btn-primary">New Group</button>
+                            <button id="groupChooseExistingBtn" class="btn btn-secondary">Join Existing Group</button>
+                        </div>
+                    </div>
+
+                    <!-- Step 2a: creating a new group -->
+                    <div id="groupStepNew" class="group-step hidden">
+                        <p class="confirm-modal-message">What's your group's name?</p>
+                        <p class="group-modal-subtext">Pick something memorable, like "Smith Family" or "Cabin 3". You'll get a code afterward to share with your group so they can join later.</p>
+                        <input type="text" id="groupNameInputNew" class="group-name-input" placeholder="Enter group name" maxlength="40">
+                        <p id="groupNameErrorNew" class="group-name-error"></p>
+                        <div class="confirm-modal-buttons">
+                            <button id="groupBackFromNewBtn" class="btn btn-secondary">Back</button>
+                            <button id="groupCreateBtn" class="btn btn-primary">Create Group</button>
+                        </div>
+                    </div>
+
+                    <!-- Step 2b: joining an existing group -->
+                    <div id="groupStepExisting" class="group-step hidden">
+                        <p class="confirm-modal-message">Enter your group's name and code</p>
+                        <p class="group-modal-subtext">Whoever set up the group has the 4-digit code. Ask them to share it if you don't have it.</p>
+                        <input type="text" id="groupNameInputExisting" class="group-name-input" placeholder="Group name" maxlength="40">
+                        <input type="text" id="groupCodeInputExisting" class="group-name-input group-code-input" placeholder="4-digit code" maxlength="4" inputmode="numeric" pattern="[0-9]*">
+                        <p id="groupExistingError" class="group-name-error"></p>
+                        <div class="confirm-modal-buttons">
+                            <button id="groupBackFromExistingBtn" class="btn btn-secondary">Back</button>
+                            <button id="groupJoinBtn" class="btn btn-primary">Join Group</button>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: show the newly generated code -->
+                    <div id="groupStepCodeReveal" class="group-step hidden">
+                        <p class="confirm-modal-message">Your group is ready!</p>
+                        <p class="group-modal-subtext">Save this code and share it with your group so they can join later. They'll need both your group name and this code.</p>
+                        <div class="group-code-display" id="groupCodeDisplay">0000</div>
+                        <div class="confirm-modal-buttons">
+                            <button id="groupCodeContinueBtn" class="btn btn-primary">Got It, Let's Play</button>
+                        </div>
                     </div>
                 </div>
             </div>
