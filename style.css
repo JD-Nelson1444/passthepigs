@@ -38,13 +38,50 @@ header h1 {
     margin: 0;
 }
 
+header .header-video-wrap {
+    /* Positioning context for the stop/mute overlay buttons. The size cap
+       lives here (not on the video) so the wrapper matches the video's
+       rendered box exactly and the overlay lands inside the frame.
+       Cap at 800px on big screens, but never exceed the container - a plain
+       800px cap made the video overflow narrow screens and scroll the whole
+       page sideways. */
+    position: relative;
+    width: 100%;
+    max-width: min(800px, 100%);
+}
+
 header .header-video {
-    max-width: 800px;
-    max-height: 800px;
-    width: auto;
+    width: 100%;
     height: auto;
+    display: block;
     border-radius: 10px;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+header .video-controls {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+}
+
+header .video-control-btn {
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: white;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+header .video-control-btn:hover {
+    background: rgba(0, 0, 0, 0.8);
 }
 
 header .subtitle {
@@ -870,6 +907,45 @@ header .subtitle {
     z-index: 1100;
 }
 
+/* Previous Winners popup: the purple confirm-modal look, with the same
+   leaderboard rows as the game-over screen. It can be opened while the
+   All Players panel (z-index 1001) is showing, so it sits above that too. */
+.winners-modal-overlay {
+    z-index: 1100;
+}
+
+.winners-modal-content {
+    max-width: 420px;
+    padding-top: 30px;
+}
+
+.winners-modal-title {
+    margin-bottom: 10px;
+}
+
+.winners-modal-list {
+    width: 100%;
+    margin: 0;
+    max-height: 55vh;
+    text-align: left;
+}
+
+.winners-modal-empty {
+    text-align: center;
+    opacity: 0.85;
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+/* Roster players who haven't won yet - present, but not on the board. */
+.winner-item.no-wins {
+    opacity: 0.7;
+}
+
+.winner-item.no-wins .winner-count {
+    background: rgba(255, 255, 255, 0.1);
+}
+
 .confirm-modal-content {
     display: flex;
     flex-direction: column;
@@ -1007,8 +1083,35 @@ header .subtitle {
         grid-template-columns: 1fr;
     }
 
+    /* Scoring buttons stay in two columns on phones. Stacking all 13 in one
+       column pushed End Turn well below the fold inside the turn popup,
+       forcing a scroll on every single turn. */
     .scoring-buttons {
-        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+
+    .score-btn {
+        padding: 12px 6px;
+        font-size: 12px;
+    }
+
+    /* On desktop the All Players list is a floating card pinned to the corner,
+       shown alongside the turn popup. A phone has no room for both - pinned
+       there it landed right on top of the turn card, covering the player's
+       name and turn score. Put it back in the normal page flow instead, below
+       the roster: it's readable whenever the turn popup is closed, and sits
+       behind the popup's overlay rather than over the card while it's open.
+       position: relative (not static) keeps the × button anchored to the
+       panel, and z-index: auto stops it painting above the popup overlay. */
+    .scores-side-panel {
+        position: relative;
+        top: auto;
+        right: auto;
+        width: 100%;
+        max-width: none;
+        max-height: none;
+        margin-top: 20px;
+        z-index: auto;
     }
 
     .add-player-form {

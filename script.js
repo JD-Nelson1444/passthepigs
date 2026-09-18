@@ -242,6 +242,16 @@ function runGroupSetupFlow() {
 function resolveCurrentPlayerIndex() {
     if (gameState.players.length === 0) return false;
 
+    // Every player out but the game not marked over: a group saved by an older
+    // version of the app that could stall this way. Nobody can take a turn, so
+    // flip it to the no-winner game-over state (reset buttons become available)
+    // instead of leaving a "current" player who can't open a turn card.
+    if (!gameState.gameOver && gameState.players.every(p => p.isOut)) {
+        gameState.gameOver = true;
+        gameState.winnerName = null;
+        return true;
+    }
+
     const originalIndex = gameState.currentPlayerIndex;
 
     if (gameState.currentPlayerIndex < 0 || gameState.currentPlayerIndex >= gameState.players.length) {
@@ -411,6 +421,29 @@ function queueSave() {
     }, 400);
 }
 
+// Write a queued save immediately instead of waiting out the debounce.
+function flushPendingSave() {
+    if (saveTimeout === null) return;
+    clearTimeout(saveTimeout);
+    saveTimeout = null;
+    saveGroupState();
+}
+
+// A save can still be sitting in the 400ms debounce when the page goes away -
+// closing the tab, switching apps on a phone, or the screen locking. Firestore
+// keeps the write queued locally and sends it when the page is opened again,
+// so the score isn't lost, but flushing here gets it to the server right away
+// (and to anyone else watching the game) instead of on next launch.
+//
+// 'pagehide' is the reliable signal on mobile Safari, where a backgrounded tab
+// is often frozen or discarded without ever firing 'beforeunload'. The
+// visibilitychange handler covers the app-switch case, which on phones is far
+// more common than actually closing the tab.
+window.addEventListener('pagehide', flushPendingSave);
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushPendingSave();
+});
+
 // Forget the saved group on this device and reload so the group prompt
 // appears again, letting the person switch to (or create) a different group.
 function switchGroup() {
@@ -461,37 +494,79 @@ function playWinSound() {
 
 // Winner songs array
 const winnerSongs = [
-    'Audio/Winner/delon_boomkin-winner-sting-hollywood-476528.mp3',
-    'Audio/Winner/tunetank-winner-awards-logo-484335.mp3'
+    'Audio/Winner/Winner1.mp3',
+    'Audio/Winner/Winner2.mp3'
 ];
 
+// The winner song currently playing, or null. The winner tracks are full-length
+// songs (a few minutes), so this is tracked so a reset can fade it out rather
+// than let it run on under the next game.
+let currentWinnerSong = null;
+
 function playRandomWinnerSong() {
+    fadeOutWinnerSong(); // in case one is somehow still going
+
     const randomIndex = Math.floor(Math.random() * winnerSongs.length);
     const winnerSong = new Audio(winnerSongs[randomIndex]);
     winnerSong.volume = 0.7;
+    winnerSong.addEventListener('ended', () => {
+        if (currentWinnerSong === winnerSong) currentWinnerSong = null;
+    });
     winnerSong.play().catch(err => {
         console.log('Could not play winner song:', err);
+    });
+    currentWinnerSong = winnerSong;
+}
+
+// Fade the winner song out over ~1.5s and stop it. Called by every button on
+// the game-over screen. Safe to call when nothing is playing.
+function fadeOutWinnerSong() {
+    const song = currentWinnerSong;
+    if (!song) return;
+    currentWinnerSong = null;
+
+    const FADE_DURATION_MS = 1500;
+    const FADE_STEPS = 30;
+    const startVolume = song.volume;
+    let stepsRemaining = FADE_STEPS;
+
+    const fadeInterval = setInterval(() => {
+        stepsRemaining--;
+        song.volume = Math.max(0, startVolume * stepsRemaining / FADE_STEPS);
+        if (stepsRemaining <= 0) {
+            clearInterval(fadeInterval);
+            song.pause();
+            song.currentTime = 0;
+        }
+    }, FADE_DURATION_MS / FADE_STEPS);
+}
+
+// Played when the game ends with nobody left standing (every player knocked
+// out by a Piggy Back) - a fail sting rather than a fanfare.
+const gameOverSounds = [
+    'Audio/Game Over/Gameover1.mp3',
+    'Audio/Game Over/Gameover2.mp3'
+];
+
+function playRandomGameOverSound() {
+    const randomIndex = Math.floor(Math.random() * gameOverSounds.length);
+    const gameOverSound = new Audio(gameOverSounds[randomIndex]);
+    gameOverSound.volume = 0.6;
+    gameOverSound.play().catch(err => {
+        console.log('Could not play game over sound:', err);
     });
 }
 
 // Pig Out sounds array
 const pigOutSounds = [
-    'Audio/PigOut/floraphonic-buzzer-15-187758.mp3',
-    'Audio/PigOut/floraphonic-buzzer-18-203421.mp3',
-    'Audio/PigOut/floraphonic-violin-lose-5-185126.mp3',
-    'Audio/PigOut/freesound_community-072656_pig-86579.mp3',
-    'Audio/PigOut/freesound_community-080190_pig-86603 (1).mp3',
-    'Audio/PigOut/freesound_community-082614_pig-86580.mp3',
-    'Audio/PigOut/freesound_community-085735_pig-86586.mp3',
-    'Audio/PigOut/freesound_community-failure-2-89169.mp3',
-    'Audio/PigOut/freesound_community-oink-40664.mp3',
-    'Audio/PigOut/freesound_community-pig-oink-47167.mp3',
-    'Audio/PigOut/magiaz-pig-426575.mp3',
-    'Audio/PigOut/magiaz-porco1-326305.mp3',
-    'Audio/PigOut/stu9-boinger-357066.mp3',
-    'Audio/PigOut/stu9-longbong-357099.mp3',
-    'Audio/PigOut/stu9-metal-drip-357117.mp3',
-    'Audio/PigOut/stu9-quack-3-352831.mp3'
+    'Audio/PigOut/Pigout2.mp3',
+    'Audio/PigOut/Pigout3.mp3',
+    'Audio/PigOut/Pigout4.mp3',
+    'Audio/PigOut/Pigout5.mp3',
+    'Audio/PigOut/Pigout6.mp3',
+    'Audio/PigOut/Pigout7.mp3',
+    'Audio/PigOut/Pigout8.mp3',
+    'Audio/PigOut/Pigout9.mp3'
 ];
 
 function playRandomPigOutSound() {
@@ -543,8 +618,8 @@ const addPlayerSounds = [
     'Audio/AddPlayer/AddPlayer10.mp3',
     'Audio/AddPlayer/AddPlayer11.mp3',
     'Audio/AddPlayer/AddPlayer12.mp3',
-    'Audio/AddPlayer/AddPlayer13.mp3'
-
+    'Audio/AddPlayer/AddPlayer13.mp3',
+    'Audio/AddPlayer/AddPlayer14.mp3'
 ];
 
 // Tracks which Add Player sounds are still available to play, so the same
@@ -659,9 +734,34 @@ const gameState = {
 // Backed by winnersCache (in-memory, synced to this group's Firestore
 // document) instead of localStorage, so winner history is shared by
 // everyone in the group rather than stuck on one device.
+// Upper bound on how many distinct names winnersCache keeps. Nothing else
+// ever removes an entry (only "Clear Winner Records" wipes the whole thing),
+// so without this the map grows by one key per unique winner forever. The
+// Firestore rules reject a `winners` map over 100 entries, and a rejected
+// save fails silently - so prune well below that line.
+const MAX_WINNER_RECORDS = 50;
+
+// Keep only the MAX_WINNER_RECORDS names with the most wins, always retaining
+// the name that was just recorded (a first-time winner would otherwise be
+// the lowest count and get dropped immediately). The leaderboard only shows
+// the top 10, so trimming the long tail once a group has had 50+ distinct
+// winners changes nothing visible.
+function pruneWinnerRecords(keepName) {
+    const entries = Object.entries(winnersCache);
+    if (entries.length <= MAX_WINNER_RECORDS) return;
+
+    const kept = entries
+        .filter(([name]) => name !== keepName)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, MAX_WINNER_RECORDS - 1);
+    kept.push([keepName, winnersCache[keepName]]);
+    winnersCache = Object.fromEntries(kept);
+}
+
 const winnerTracker = {
     recordWin(playerName) {
         winnersCache[playerName] = (winnersCache[playerName] || 0) + 1;
+        pruneWinnerRecords(playerName);
     },
     getWinCount(playerName) {
         return winnersCache[playerName] || 0;
@@ -721,6 +821,10 @@ const scoresModal = document.getElementById('scoresModal');
 const scoresModalList = document.getElementById('scoresModalList');
 const viewScoresBtn = document.getElementById('viewScoresBtn');
 const closeScoresModalBtn = document.getElementById('closeScoresModalBtn');
+const previousWinnersBtn = document.getElementById('previousWinnersBtn');
+const winnersModal = document.getElementById('winnersModal');
+const winnersModalList = document.getElementById('winnersModalList');
+const closeWinnersModalBtn = document.getElementById('closeWinnersModalBtn');
 const confirmModal = document.getElementById('confirmModal');
 const confirmModalMessage = document.getElementById('confirmModalMessage');
 const confirmModalButtons = document.getElementById('confirmModalButtons');
@@ -747,7 +851,27 @@ const groupCodeDisplay = document.getElementById('groupCodeDisplay');
 const groupCodeContinueBtn = document.getElementById('groupCodeContinueBtn');
 const loadingOverlay = document.getElementById('loadingOverlay');
 const loadingMessage = document.getElementById('loadingMessage');
+const videoMuteBtn = document.getElementById('videoMuteBtn');
 
+
+// Mute button overlaid on the header video. The video file has no audio
+// track of its own; the sound heard alongside it is the intro song, so this
+// button mutes only that. Game sound effects are unaffected.
+let introMuted = false;
+
+function updateMuteButton() {
+    videoMuteBtn.textContent = introMuted ? '🔇' : '🔊';
+    videoMuteBtn.title = introMuted ? 'Unmute intro song' : 'Mute intro song';
+    videoMuteBtn.setAttribute('aria-label', videoMuteBtn.title);
+}
+
+videoMuteBtn.addEventListener('click', () => {
+    introMuted = !introMuted;
+    if (introAudio) introAudio.muted = introMuted;
+    updateMuteButton();
+});
+
+updateMuteButton();
 
 // Event Listeners
 // Function to open the modal
@@ -771,6 +895,12 @@ closeTurnModalBtn.addEventListener('click', closeTurnModal);
 
 viewScoresBtn.addEventListener('click', openScoresModal);
 closeScoresModalBtn.addEventListener('click', closeScoresModal);
+
+previousWinnersBtn.addEventListener('click', openWinnersModal);
+closeWinnersModalBtn.addEventListener('click', closeWinnersModal);
+winnersModal.addEventListener('click', (event) => {
+    if (event.target === winnersModal) closeWinnersModal();
+});
 
 // Styled replacements for the browser's native confirm()/alert() dialogs,
 // so popups match the game's look and feel. Behavior is identical to
@@ -854,12 +984,19 @@ showGroupCodeBtn.addEventListener('click', async () => {
     await showGameAlert('Group: ' + currentGroupName + '\nCode: ' + currentGroupCode + '\n\nShare both the name and the code with anyone who wants to join this group from another device.');
 });
 
-// Play intro song when page loads
-function playIntroSong() {
-    const introAudio = new Audio('Audio/IntroSong.mp3');
+// Play intro song when page loads. Kept in a shared variable so the mute
+// button on the header video can toggle it.
+let introAudio = null;
+
+function startIntroAudio() {
+    introAudio = new Audio('Audio/IntroSong.mp3');
     introAudio.volume = 0.5;
-    
-    const playPromise = introAudio.play();
+    introAudio.muted = introMuted;
+    return introAudio.play();
+}
+
+function playIntroSong() {
+    const playPromise = startIntroAudio();
     if (playPromise !== undefined) {
         playPromise
             .then(() => {
@@ -881,9 +1018,7 @@ function enableAudioOnInteraction() {
             audioContext.resume();
         }
         // Try playing intro song again
-        const introAudio = new Audio('Audio/IntroSong.mp3');
-        introAudio.volume = 0.5;
-        introAudio.play().catch(err => {
+        startIntroAudio().catch(err => {
             console.log('Could not play intro song on interaction:', err);
         });
         // Remove listeners after first interaction
@@ -917,15 +1052,9 @@ async function addPlayer() {
         return;
     }
     
-    // Special event: Play intro song if player name is Jones, otherwise play a random add player sound.
-    // Whichever file plays gets remembered on the player so "My Turn" can replay the same clip.
-    let assignedSound;
-    if (name.toLowerCase() === 'jones') {
-        assignedSound = 'Audio/IntroSong.mp3';
-        playIntroSong();
-    } else {
-        assignedSound = playRandomAddPlayerSound();
-    }
+    // Play a random add player sound. The file that plays gets remembered on
+    // the player so "My Turn" can replay the same clip.
+    const assignedSound = playRandomAddPlayerSound();
     
     gameState.players.push({
         name: name,
@@ -1004,7 +1133,7 @@ async function recordScore(playerIndex, scoreType, points) {
             action: 'Pig Out'
         });
         currentPlayer.turnScore = 0;
-        endTurn();
+        endTurn(PENALTY_NEXT_PLAYER_DELAY_MS);
     } else if (scoreType === 'Oinker') {
         // Lose all points (back to 0)
         playPenaltySound();
@@ -1017,7 +1146,7 @@ async function recordScore(playerIndex, scoreType, points) {
         });
         currentPlayer.totalScore = 0;
         currentPlayer.turnScore = 0;
-        endTurn();
+        endTurn(PENALTY_NEXT_PLAYER_DELAY_MS);
     } else if (scoreType === 'Piggy Back') {
         // Lose all points and kicked out
         playPenaltySound();
@@ -1033,7 +1162,7 @@ async function recordScore(playerIndex, scoreType, points) {
         currentPlayer.isOut = true;
         
         // End turn immediately after Piggy Back
-        endTurn();
+        endTurn(PENALTY_NEXT_PLAYER_DELAY_MS);
         return;
     } else {
         // Regular scoring
@@ -1050,8 +1179,14 @@ async function recordScore(playerIndex, scoreType, points) {
     queueSave();
 }
 
-// End the current turn and move to next player
-function endTurn() {
+// How long a penalty (Pig Out / Oinker / Piggy Back) holds back the next
+// player's clip and turn popup, so the penalty sound can finish (see endTurn).
+const PENALTY_NEXT_PLAYER_DELAY_MS = 2000;
+
+// End the current turn and move to next player.
+// nextPlayerDelayMs: optional pause before the new current player's clip
+// plays and their turn popup opens.
+function endTurn(nextPlayerDelayMs = 0) {
     if (gameState.gameOver) return;
     
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
@@ -1081,18 +1216,42 @@ function endTurn() {
     do {
         nextPlayerIndex = (nextPlayerIndex + 1) % gameState.players.length;
     } while (gameState.players[nextPlayerIndex].isOut && nextPlayerIndex !== gameState.currentPlayerIndex);
-    
+
+    // The loop only lands on an "out" player if it wrapped all the way around
+    // without finding anyone still in - i.e. the last remaining player just
+    // got a Piggy Back. Nobody can take a turn, so end the game with no winner
+    // rather than leaving a current player who can't open a turn card.
+    if (gameState.players[nextPlayerIndex].isOut) {
+        openScoresModal();
+        endGameWithNoWinner();
+        return;
+    }
+
     gameState.currentPlayerIndex = nextPlayerIndex;
     updateUI();
     queueSave();
     
-    // Play the new current player's sound clip now that End Turn has advanced to them
-    playPlayerSoundClip(gameState.players[nextPlayerIndex].addSound);
-    
-    // Automatically open the next player's turn popup after the close animation
-    setTimeout(() => {
-        openTurnModal();
-    }, 350);
+    // Hand over to the new current player: play their clip and open their
+    // turn popup. After a penalty this whole handover waits so the penalty
+    // sound finishes first; otherwise the clip plays right away and the
+    // popup follows once the close animation has finished.
+    const nextPlayer = gameState.players[nextPlayerIndex];
+    if (nextPlayerDelayMs > 0) {
+        setTimeout(() => {
+            // Only if it's still this player's turn - a reset or a change from
+            // another device during the wait shouldn't trigger a stray handover.
+            const current = gameState.players[gameState.currentPlayerIndex];
+            if (!gameState.gameOver && current && current.name === nextPlayer.name) {
+                playPlayerSoundClip(nextPlayer.addSound);
+                openTurnModal();
+            }
+        }, nextPlayerDelayMs);
+    } else {
+        playPlayerSoundClip(nextPlayer.addSound);
+        setTimeout(() => {
+            openTurnModal();
+        }, 350);
+    }
 }
 
 // Undo the last action
@@ -1144,6 +1303,22 @@ function endGame(winnerName) {
     queueSave();
 }
 
+// End the game with no winner - every player has been knocked out by a
+// Piggy Back. Nothing is recorded in the all-time winners; the game-over
+// screen just offers the usual reset options.
+function endGameWithNoWinner() {
+    closeTurnModal();
+
+    gameState.gameOver = true;
+    gameState.winnerName = null;
+
+    updateUI(); // renders the no-winner game-over screen via renderGameOverState()
+
+    playPenaltySound();
+    playRandomGameOverSound();
+    queueSave();
+}
+
 // Show or hide the game-over screen to match gameState. Driven purely by
 // state (rather than only from endGame) so a device that's just watching
 // sees the winner when the update arrives from Firestore.
@@ -1159,13 +1334,18 @@ function renderGameOverState() {
     // to whoever crossed 100 points.
     const winner = gameState.players.find(p => p.name === gameState.winnerName)
         || gameState.players.find(p => p.totalScore >= 100);
-    const winnerName = winner ? winner.name : (gameState.winnerName || 'Someone');
-    const winnerPoints = winner ? winner.totalScore : 0;
-    const winCount = winnerTracker.getWinCount(winnerName);
 
-    const safeWinnerName = escapeHtml(winnerName);
-    winnerMessage.innerHTML = `<strong>${safeWinnerName}</strong> wins with <strong>${winnerPoints}</strong> points!<br><br>
+    if (winner) {
+        const safeWinnerName = escapeHtml(winner.name);
+        const winCount = winnerTracker.getWinCount(winner.name);
+        winnerMessage.innerHTML = `<strong>${safeWinnerName}</strong> wins with <strong>${winner.totalScore}</strong> points!<br><br>
 <span class="win-stats">${safeWinnerName} has won <strong>${winCount}</strong> ${winCount === 1 ? 'game' : 'games'}</span>`;
+    } else {
+        // Game over with nobody at 100: everyone was knocked out by a Piggy
+        // Back (see endGameWithNoWinner). Nothing goes in the record books.
+        winnerMessage.innerHTML = `Everyone's been knocked out by a Piggy Back!<br><br>
+<span class="win-stats">No winner this round</span>`;
+    }
     generateWinnerLeaderboard();
 
     gameOverBackdrop.classList.remove('hidden');
@@ -1174,37 +1354,77 @@ function renderGameOverState() {
 
 // Generate and display the winner leaderboard
 function generateWinnerLeaderboard() {
-    const allWinners = winnerTracker.getAllWinners();
-    
-    if (Object.keys(allWinners).length === 0) {
+    if (winnerTracker.getTotalWins() === 0) {
         winnerLeaderboard.innerHTML = '';
         return;
     }
-    
-    // Sort winners by win count (descending)
-    const sortedWinners = Object.entries(allWinners)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10); // Show top 10 winners
-    
-    let leaderboardHTML = '<h3>📊 All-Time Winners</h3>';
-    
-    sortedWinners.forEach((entry, index) => {
-        const [playerName, winCount] = entry;
-        const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
-        leaderboardHTML += `
-            <div class="winner-item">
-                <span class="winner-rank">${medal || index + 1}.</span>
+
+    winnerLeaderboard.innerHTML = '<h3>📊 All-Time Winners</h3>'
+        + buildWinnerRowsHTML(sortedWinnerEntries().slice(0, 10));
+}
+
+// Every recorded winner as [name, winCount] pairs, most wins first.
+function sortedWinnerEntries() {
+    return Object.entries(winnerTracker.getAllWinners())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+// Build ranked rows from [name, winCount] pairs (already sorted). Shared by
+// the game-over leaderboard and the Previous Winners popup. Medals go to the
+// top three only if they've actually won something - a roster full of
+// zero-win players doesn't get a gold medal for showing up.
+function buildWinnerRowsHTML(entries) {
+    return entries.map(([playerName, winCount], index) => {
+        const medal = winCount > 0
+            ? (index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '')
+            : '';
+        const rank = medal || (index + 1) + '.';
+        return `
+            <div class="winner-item${winCount === 0 ? ' no-wins' : ''}">
+                <span class="winner-rank">${rank}</span>
                 <span class="winner-name">${escapeHtml(playerName)}</span>
-                <span class="winner-count">${winCount}</span>
+                <span class="winner-count">${winCount} ${winCount === 1 ? 'win' : 'wins'}</span>
             </div>
         `;
+    }).join('');
+}
+
+// Fill the Previous Winners popup: every recorded winner in this group's
+// history, plus anyone on the current roster who hasn't won yet at 0 - so the
+// people at the table can see exactly where they stand. Roster names are
+// matched to past winners case-insensitively, so "bob" from last month and
+// today's "Bob" show as one person rather than two.
+function updateWinnersModalContent() {
+    const entries = sortedWinnerEntries();
+    const knownNames = new Set(entries.map(([name]) => name.toLowerCase()));
+
+    gameState.players.forEach((player) => {
+        if (!knownNames.has(player.name.toLowerCase())) {
+            entries.push([player.name, 0]);
+            knownNames.add(player.name.toLowerCase());
+        }
     });
-    
-    winnerLeaderboard.innerHTML = leaderboardHTML;
+
+    if (entries.length === 0) {
+        winnersModalList.innerHTML = '<p class="winners-modal-empty">No players or winners in this group yet.<br>Add some players and play a game to 100!</p>';
+        return;
+    }
+
+    winnersModalList.innerHTML = buildWinnerRowsHTML(entries);
+}
+
+function openWinnersModal() {
+    updateWinnersModalContent();
+    winnersModal.classList.add('show');
+}
+
+function closeWinnersModal() {
+    winnersModal.classList.remove('show');
 }
 
 // Reset the game
 function resetGame() {
+    fadeOutWinnerSong();
     gameState.players = [];
     gameState.currentPlayerIndex = 0;
     gameState.gameOver = false;
@@ -1220,6 +1440,7 @@ function resetGame() {
 // history is left untouched) and forget this device's group so the person
 // lands back on the opening "new group / join group" screen.
 async function endGameAndGoHome() {
+    fadeOutWinnerSong();
     gameState.players = [];
     gameState.currentPlayerIndex = 0;
     gameState.gameOver = false;
@@ -1233,6 +1454,8 @@ async function endGameAndGoHome() {
 
 // Reset game scores but keep the same players
 function resetGameSamePlayers() {
+    fadeOutWinnerSong();
+
     // Reset scores for all players but keep them in the game
     gameState.players.forEach(player => {
         player.totalScore = 0;
@@ -1276,6 +1499,11 @@ function updateUI() {
     // Keep the all-scores popup in sync if it's currently open
     if (scoresModal.classList.contains('show')) {
         updateScoresModalContent();
+    }
+
+    // Same for the Previous Winners popup (a win can arrive from another device)
+    if (winnersModal.classList.contains('show')) {
+        updateWinnersModalContent();
     }
 
     // Show/hide the game-over screen based on state (matters for devices
@@ -1396,7 +1624,7 @@ function createPlayerTurnCard(player, index) {
     endTurnBtn.className = 'end-turn-btn';
     endTurnBtn.textContent = 'End Turn';
     endTurnBtn.disabled = player.turnScore === 0 && player.history.length === 0;
-    endTurnBtn.addEventListener('click', endTurn);
+    endTurnBtn.addEventListener('click', () => endTurn());
     
     const undoBtn = document.createElement('button');
     undoBtn.className = 'undo-btn';

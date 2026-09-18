@@ -1,0 +1,83 @@
+rules_version = '2';
+
+// Security rules for the Pass the Pigs score keeper.
+//
+// This is a COPY of what is deployed in the Firebase console
+// (Firestore Database -> Rules). Editing this file does NOT change anything
+// that is live - the rules only take effect when they are published from the
+// console, or deployed with `firebase deploy --only firestore:rules`.
+//
+// Access model: each group's game lives at groups/<sanitized-name>-<4-digit-code>.
+// The document ID is the access key - the name alone is not enough, and the
+// collection cannot be listed, so valid IDs can't be discovered by browsing.
+// The app runs unauthenticated, so these rules are the ONLY access control:
+// the Firebase API key in script.js is public by design and authorizes nothing.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /groups/{groupId} {
+
+      // A group document must look exactly like what the app writes in
+      // saveGroupState(). This stops a stranger from replacing a group's game
+      // with arbitrary fields, wrong types, or an unbounded number of players.
+      function validGroup() {
+        let d = request.resource.data;
+
+        return
+          // Every field the app always writes must be present...
+          d.keys().hasAll(['groupName', 'players', 'currentPlayerIndex',
+                           'gameOver', 'winners', 'updatedAt'])
+          // ...and nothing beyond the known set may be smuggled in.
+          // winnerName is optional: it is absent on a freshly created group
+          // and only added once somebody wins.
+          && d.keys().hasOnly(['groupName', 'players', 'currentPlayerIndex',
+                               'gameOver', 'winnerName', 'winners', 'updatedAt'])
+
+          && d.groupName is string
+          && d.groupName.size() > 0
+          && d.groupName.size() <= 40
+
+          // The app caps the roster at 10 players (see addPlayer).
+          && d.players is list
+          && d.players.size() <= 10
+
+          && d.currentPlayerIndex is int
+          && d.currentPlayerIndex >= 0
+          && d.currentPlayerIndex < 10
+
+          && d.gameOver is bool
+
+          && (!d.keys().hasAny(['winnerName'])
+              || d.winnerName == null
+              || d.winnerName is string)
+
+          && d.winners is map
+          && d.winners.size() <= 100
+
+          // serverTimestamp() resolves to request.time, so this both requires
+          // the field and prevents a client from backdating or forging it.
+          && d.updatedAt == request.time;
+      }
+
+      // Reading one group by its full ID stays open - the ID is the secret.
+      allow get: if true;
+
+      // Listing the collection stays blocked, so group IDs can't be discovered.
+      allow list: if false;
+
+      // Creates and updates must match the shape above.
+      allow create, update: if validGroup();
+
+      // The app never deletes a group; "End Game" just writes an empty roster.
+      // Blocking delete means a stranger with a group ID cannot destroy a game.
+      allow delete: if false;
+    }
+
+    // Everything outside /groups is denied. Firestore already denies paths that
+    // match no rule; this makes that explicit.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -10,10 +10,15 @@
     <div class="container">
         <header>
             <div class="header-content">
-                <video autoplay muted loop playsinline class="header-video">
-                    <source src="Video/PTP.mp4" type="video/mp4">
-                    Your browser does not support the video tag.
-                </video>
+                <div class="header-video-wrap">
+                    <video autoplay muted loop playsinline class="header-video" id="headerVideo">
+                        <source src="Video/PTP.mp4" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    <div class="video-controls">
+                        <button type="button" id="videoMuteBtn" class="video-control-btn" title="Mute sound" aria-label="Mute sound">🔊</button>
+                    </div>
+                </div>
             </div>
         </header>
 
@@ -31,7 +36,8 @@
                 <h2>Add Players</h2>
                 <div class="add-player-form">
                     <input type="text" id="playerNameInput" placeholder="Enter player name" maxlength="20">
-                    <button id="addPlayerBtn" class="btn btn-primary">Add Player</button>                    
+                    <button id="addPlayerBtn" class="btn btn-primary">Add Player</button>
+                    <button id="previousWinnersBtn" class="btn btn-secondary" title="Everyone who has won a game in this group">🏆 Previous Winners</button>
                     <button id="clearWinnersBtn" class="btn btn-secondary" title="Clear all winner records">Clear Winner Records</button>
                     <button id="viewScoresBtn" class="btn btn-secondary">📋 View All Scores</button>
                     <button class="open-btn" id="openModalBtn">Help</button>
@@ -57,7 +63,7 @@
             <!-- Player Turn Popup -->
             <div class="modal-overlay turn-modal-overlay" id="turnModal">
                 <div class="modal-content turn-modal-content">
-                    <button class="close-btn" id="closeTurnModalBtn" title="Close card)">&times;</button>
+                    <button class="close-btn" id="closeTurnModalBtn" title="Close card">&times;</button>
                     <div id="turnModalContent">
                         <!-- Current player's turn card is inserted here -->
                     </div>
@@ -93,6 +99,18 @@
                 </div>
             </div>
 
+            <!-- Previous Winners Popup (all-time win counts for this group) -->
+            <div class="modal-overlay winners-modal-overlay" id="winnersModal">
+                <div class="modal-content confirm-modal-content winners-modal-content">
+                    <button class="close-btn" id="closeWinnersModalBtn" title="Close">&times;</button>
+                    <div class="confirm-modal-icon">🏆</div>
+                    <p class="confirm-modal-message winners-modal-title">Previous Winners</p>
+                    <div id="winnersModalList" class="winner-leaderboard winners-modal-list">
+                        <!-- Winner rows are inserted here -->
+                    </div>
+                </div>
+            </div>
+
             <!-- Help Modal Popup -->
             <div class="modal-overlay" id="imageModal">
                 <div class="modal-content">
@@ -118,7 +136,7 @@
                     <!-- Step 2a: creating a new group -->
                     <div id="groupStepNew" class="group-step hidden">
                         <p class="confirm-modal-message">What's your group's name?</p>
-                        <p class="group-modal-subtext">Pick something memorable, like "Smith Family" or "Cabin 3". You'll get a code afterward to share with your group so they can join later.</p>
+                        <p class="group-modal-subtext">Pick something memorable, like "Smith Family" or "Cabin 3". You'll get a PIN code after entering your group name to use the next time you play with this group.</p>
                         <input type="text" id="groupNameInputNew" class="group-name-input" placeholder="Enter group name" maxlength="40">
                         <p id="groupNameErrorNew" class="group-name-error"></p>
                         <div class="confirm-modal-buttons">
@@ -143,7 +161,7 @@
                     <!-- Step 3: show the newly generated code -->
                     <div id="groupStepCodeReveal" class="group-step hidden">
                         <p class="confirm-modal-message">Your group is ready!</p>
-                        <p class="group-modal-subtext">Save this code and share it with your group so they can join later. They'll need both your group name and this code.</p>
+                        <p class="group-modal-subtext">Save this code so you can join the same group next time. You'll need both your group name and this PIN code.</p>
                         <div class="group-code-display" id="groupCodeDisplay">0000</div>
                         <div class="confirm-modal-buttons">
                             <button id="groupCodeContinueBtn" class="btn btn-primary">Got It, Let's Play</button>
