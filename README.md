@@ -14,20 +14,20 @@ Runs in any browser, works on phones, and needs no install or account.
 
 The first time you open the app it asks whether you're starting a **new group** or **joining an existing one**.
 
-- **New group** – pick a name (like "Smith Family" or "Cabin 3"). You'll get a 4‑digit code. Save it: anyone who wants to see this group's games from another device needs both the name and the code.
+- **New group** – pick a name (like "Smith Family" or "Cabin 3"). You'll get a 4‑digit code. Save it: if you want to use the same group name again, with the same players, you'll need both the group name and the code.
 - **Join existing group** – enter the group's name and 4‑digit code.
 
 Your device remembers the group, so you won't be asked again. **Show Code** in the header displays the code any time; **Switch Group** lets you move to a different one.
 
 ### Play a game
 
-1. **Add players** (up to 10). Each player gets their own sound that plays when it's their turn.
-2. Tap **My Turn** on the current player's card to open their scoring popup.
-3. Roll the pigs and tap the position they landed in. Points add to the turn score.
-4. Tap **End Turn** to bank the turn score and pass to the next player — or keep rolling and risk it.
+1. **Add players** (up to 10). Each player gets their own walk-up song that plays when it's their turn.
+2. Click **My Turn** on the current player's card to open their scoring popup.
+3. Roll the pigs and click the position they landed in. Points add to the turn score.
+4. Click **End Turn** to bank the turn score and pass to the next player — or keep rolling and risk it.
 5. First to **100 points** wins.
 
-**Undo** reverses the last tap in the current turn. **View All Scores** shows everyone's running total. **Previous Winners** shows the all‑time win count for everyone in your group, including anyone at the table who hasn't won yet.
+**Undo** reverses the last Click in the current turn. **View All Scores** shows everyone's running total. **Previous Winners** shows the all‑time win count for everyone in your group, including anyone at the table who hasn't won yet.
 
 ### Scoring
 
@@ -44,7 +44,7 @@ Your device remembers the group, so you won't be asked again. **Show Code** in t
 | Double Snouter | 40 |
 | Double Leaning Jowler | 60 |
 
-**Penalties** — each ends your turn immediately:
+**Penalties** — each of these penalties ends your turn immediately:
 
 | Roll | Effect |
 |---|---|
@@ -52,11 +52,11 @@ Your device remembers the group, so you won't be asked again. **Show Code** in t
 | **Oinker** (pigs touching) | Lose *all* your points — back to 0 |
 | **Piggy Back** (one pig on top of the other) | Out of the game |
 
-Oinker and Piggy Back ask you to confirm before they take effect, since they can't be undone. The **Help** button shows a picture guide to the pig positions.
+Oinker and Piggy Back ask you to confirm before they take effect, since they can't be undone. The **Help** button shows a picture guide to the pig positions and scores for each.
 
 ### Playing with more than one device
 
-The group's game lives online, so anyone who has joined the group sees the same players and scores, and updates appear on every device within a second or two. It's designed for **one person keeping score** while others watch on their phones — if two people tap at the same time, the last tap wins.
+It's designed for **one person keeping score** and the group of people playing are in the same physical room. It is possible to play remotely, so anyone who has joined the group sees the same players and scores, and updates appear on every device within a second or two. If two people tap at the same time, the last tap wins.
 
 ---
 
