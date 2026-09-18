@@ -1,0 +1,6 @@
+# Local dev-server config for the Claude desktop app's browser pane
+.claude/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
