@@ -2,11 +2,14 @@
 
 ![Pass the Pigs – pigs dancing in front of a barn](Images/PTPSnapshot.jpg)
 
-A web app for keeping score in the dice game **Pass the Pigs**. Add your players, tap the position each pig lands in, and the app tracks turn scores, running totals, penalties, and who has won the most games in your group — with a hoedown soundtrack.
+A web app for keeping score in the dice game **Pass the Pigs**. Add your players, click the position each pig lands in, and the app tracks turn scores, running totals, penalties, and who has won the most games in your group — with a hoedown soundtrack.
 
 Runs in any browser, works on phones, and needs no install or account.
 
-**Play it here:** https://jd-nelson1444.github.io/passthepigs/
+If you don't don't have your pigs yet, go to the Pass The Pigs game store to grab a pair of pigs and start the fun!
+Winning Moves game store: https://www.amazon.com/stores/WinningMovesGamesUSA/page/D0F4496D-27E1-4C32-9659-1020D7AE6FDD?lp_asin=B00005JG3Y
+
+**Pass the Pigs scoring app here:** https://jd-nelson1444.github.io/passthepigs/
 
 ---
 
@@ -60,7 +63,7 @@ Oinker and Piggy Back ask you to confirm before they take effect, since they can
 
 ### Playing with more than one device
 
-It's designed for **one person keeping score** and the group of people playing are in the same physical room. It is possible to play remotely, so anyone who has joined the group sees the same players and scores, and updates appear on every device within a second or two. If two people tap at the same time, the last tap wins.
+It's designed for **one person keeping score** and the group of people playing are in the same physical room. It is possible to play remotely, so anyone who has joined the group sees the same players and scores, and updates appear on every device within a second or two. If two people click at the same time, the last click wins.
 
 ---
 
