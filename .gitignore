@@ -4,3 +4,7 @@
 # OS / editor noise
 .DS_Store
 Thumbs.db
+
+# Full-resolution image master. The repo ships the resized 1600px JPEG
+# (Images/PTPSnapshot.jpg); this is the source kept locally for re-exports.
+Images/PTPSnapshot.png
