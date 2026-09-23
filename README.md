@@ -1,6 +1,6 @@
 # Pass the Pigs – Score Keeper
 
-![Pass the Pigs – pigs dancing in front of a barn](Images/PTPSnapshot.png)
+![Pass the Pigs – pigs dancing in front of a barn](Images/PTPSnapshot.jpg)
 
 A web app for keeping score in the dice game **Pass the Pigs**. Add your players, click the position each pig lands in, and the app tracks turn scores, running totals, penalties, and who has won the most games in your group — with a hoedown soundtrack.
 
